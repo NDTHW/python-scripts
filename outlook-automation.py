@@ -1,33 +1,74 @@
-import win32com.client
+from exchangelib import Credentials, Account, Configuration, DELEGATE, Folder
+from exchangelib.protocol import BaseProtocol
+from exchangelib import Message, Mailbox, HTMLBody
 import os
 from datetime import datetime
 
-class OutlookAutomation:
-    def __init__(self):
-        """Initialize Outlook application object"""
-        self.outlook = win32com.client.Dispatch('Outlook.Application')
-        self.namespace = self.outlook.GetNamespace('MAPI')
-        self.inbox = self.namespace.GetDefaultFolder(6)  # 6 represents the inbox folder
+# Uncomment this line if your organization uses self-signed certificates
+# BaseProtocol.VERIFY_SSL = False
 
+class EnterpriseOutlookAutomation:
+    def __init__(self, email, username=None, password=None):
+        """
+        Initialize connection to Exchange server using EWS
+        
+        Args:
+            email: Your email address
+            username: Your domain username (if different from email)
+            password: Your password (can be None if using integrated authentication)
+        """
+        # Use domain authentication (common in enterprises)
+        # If username is not provided, extract from email
+        if not username:
+            username = email.split('@')[0]
+            
+        credentials = Credentials(username, password)
+        
+        # Auto-discover Exchange server settings
+        self.account = Account(
+            primary_smtp_address=email,
+            credentials=credentials,
+            autodiscover=True,
+            access_type=DELEGATE
+        )
+        
+        # Get the inbox folder
+        self.inbox = self.account.inbox
+        
     def create_client_folder_structure(self, client_name):
         """
         Create a folder structure for a new client
+        
         Args:
             client_name (str): Name of the client
+            
         Returns:
             dict: Dictionary containing references to created folders
         """
         try:
-            # Create main client folder
-            main_folder = self.inbox.Folders.Add(client_name)
+            # Create main client folder under inbox
+            main_folder = Folder(
+                parent=self.inbox,
+                name=client_name
+            )
+            main_folder.save()
             
             # Create subfolders
-            subfolders = {
-                'Correspondence': main_folder.Folders.Add('Correspondence'),
-                'Documents': main_folder.Folders.Add('Documents'),
-                'Invoices': main_folder.Folders.Add('Invoices'),
-                'Contracts': main_folder.Folders.Add('Contracts')
-            }
+            subfolders = {}
+            subfolder_names = [
+                'Correspondence', 
+                'Documents', 
+                'Invoices', 
+                'Contracts'
+            ]
+            
+            for name in subfolder_names:
+                subfolder = Folder(
+                    parent=main_folder,
+                    name=name
+                )
+                subfolder.save()
+                subfolders[name] = subfolder
             
             print(f"Created folder structure for {client_name}")
             return {'main': main_folder, **subfolders}
@@ -35,15 +76,17 @@ class OutlookAutomation:
         except Exception as e:
             print(f"Error creating folder structure: {e}")
             return None
-
+    
     def create_email_from_template(self, template_path, replacements=None):
         """
         Create an email from a template file
+        
         Args:
             template_path (str): Path to the template file
             replacements (dict): Dictionary of placeholder replacements
+            
         Returns:
-            MailItem: Created email item
+            Message: Created email message
         """
         try:
             # Read template
@@ -53,21 +96,26 @@ class OutlookAutomation:
             # Replace placeholders
             if replacements:
                 for key, value in replacements.items():
-                    template_content = template_content.replace(f"[{key}]", value)
+                    template_content = template_content.replace(f"[{key}]", str(value))
 
-            # Create email
-            mail = self.outlook.CreateItem(0)  # 0 represents email item
-            mail.HTMLBody = template_content
+            # Create draft email in the drafts folder
+            message = Message(
+                account=self.account,
+                folder=self.account.drafts,
+                subject="",  # Will be set later
+                body=HTMLBody(template_content)
+            )
             
-            return mail
+            return message
         
         except Exception as e:
             print(f"Error creating email from template: {e}")
             return None
-
+    
     def setup_new_client(self, client_name, client_email, template_path=None):
         """
         Setup everything needed for a new client
+        
         Args:
             client_name (str): Name of the client
             client_email (str): Client's email address
@@ -84,37 +132,42 @@ class OutlookAutomation:
                     'DATE': datetime.now().strftime('%B %d, %Y')
                 }
                 
-                mail = self.create_email_from_template(template_path, replacements)
-                if mail:
-                    mail.To = client_email
-                    mail.Subject = f"Welcome {client_name} - Partnership Information"
-                    # Display email for review before sending
-                    mail.Display()
+                message = self.create_email_from_template(template_path, replacements)
+                if message:
+                    message.subject = f"Welcome {client_name} - Partnership Information"
+                    message.to_recipients = [Mailbox(email_address=client_email)]
+                    
+                    # Save to drafts (for review before sending)
+                    message.save()
+                    
+                    print(f"Created welcome email draft for {client_name}")
             
             print(f"Completed new client setup for {client_name}")
             
         except Exception as e:
             print(f"Error in client setup: {e}")
-
-    def create_rule_for_client(self, client_name, client_email):
+    
+    def create_inbox_rule(self, client_name, client_email, target_folder):
         """
-        Create a rule to move emails from client to their folder
-        Args:
-            client_name (str): Name of the client
-            client_email (str): Client's email address
+        Note: Creating inbox rules with EWS is complex and often requires 
+        specific permissions. This is a placeholder method.
+        
+        In enterprise environments, it's often better to:
+        1. Create rules manually
+        2. Have IT set up server-side rules
+        3. Use Microsoft Flow/Power Automate for advanced rules
         """
-        try:
-            # Note: Rules automation is more complex and might require
-            # additional permissions or manual setup in some cases
-            print(f"Please create a rule manually for {client_email} to move to {client_name} folder")
-            
-        except Exception as e:
-            print(f"Error creating rule: {e}")
+        print(f"Creating inbox rules via EWS requires elevated permissions.")
+        print(f"Please create a rule manually for {client_email} to move to {client_name} folder")
 
-# Example usage
+# Example usage with enterprise authentication
 if __name__ == "__main__":
-    # Initialize automation
-    outlook = OutlookAutomation()
+    # Replace with your information
+    outlook = EnterpriseOutlookAutomation(
+        email="your.name@company.com",
+        # password is often not needed with domain authentication
+        # password="your_password"  
+    )
     
     # Setup new client
     client_info = {
